@@ -4,6 +4,14 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
+# Garante, em tempo de build, que ffmpeg e ffprobe foram instalados
+# corretamente e estao disponiveis no PATH. Se qualquer um dos dois nao
+# existir ou nao executar, o build falha aqui, em vez de falhar de forma
+# silenciosa em produção com erros como "Não foi possível ler a duração
+# do vídeo (ffprobe)".
+RUN command -v ffmpeg && ffmpeg -version && \
+    command -v ffprobe && ffprobe -version
+
 WORKDIR /app
 
 COPY requirements.txt .
