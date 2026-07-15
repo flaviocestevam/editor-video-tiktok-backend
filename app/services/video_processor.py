@@ -1,5 +1,7 @@
 import os
 import random
+import re
+import json
 import subprocess
 import logging
 import time
@@ -76,52 +78,228 @@ def _run_ffmpeg(cmd, step_name="ffmpeg", timeout=FFMPEG_TIMEOUT_SECONDS):
     return result
 
 
-def _probe_duration(path: str) -> float:
-    logger.info("Consultando duração do vídeo com ffprobe: %s", path)
+def _ffprobe_json(path: str, timeout: int = FFPROBE_TIMEOUT_SECONDS):
+    """Roda ffprobe pedindo format+streams em JSON.
+
+    Retorna uma tupla (data, stderr). "data" é um dict (já decodificado do
+    JSON) em caso de sucesso, ou None se o ffprobe falhar, travar ou
+    retornar um JSON inválido. "stderr" sempre é retornado (mesmo em caso
+    de sucesso) para permitir logar detalhes adicionais quando necessário.
+
+    Levanta VideoProcessingError apenas para os casos irrecuperáveis:
+    timeout e binário ausente no PATH.
+    """
     cmd = [
         "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrapper=1:nokey=1",
+        "-show_format", "-show_streams",
+        "-of", "json",
         path,
     ]
-
+    logger.info("Executando ffprobe (json): %s", " ".join(cmd))
     start = time.monotonic()
+
     try:
         result = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=FFPROBE_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
         logger.error(
-            "ffprobe travou/excedeu %ss ao ler %s", FFPROBE_TIMEOUT_SECONDS, path
+            "ffprobe (json) travou/excedeu %ss ao analisar %s", timeout, path
         )
         raise VideoProcessingError(
             "Tempo limite excedido ao ler informações do vídeo (ffprobe). "
-            "O arquivo pode estar corrompido."
+            "O arquivo pode estar corrompido ou ser muito grande."
         ) from exc
     except FileNotFoundError as exc:
         logger.error("ffprobe não encontrado no PATH do servidor.")
         raise VideoProcessingError(
             "ffprobe não está instalado ou não foi encontrado no PATH do servidor."
         ) from exc
+    except Exception as exc:
+        logger.exception("Erro inesperado ao executar ffprobe (json) em %s", path)
+        raise VideoProcessingError(
+            f"Erro inesperado ao consultar informações do vídeo: {exc}"
+        ) from exc
+
+    elapsed = time.monotonic() - start
+    stderr = result.stderr.decode("utf-8", errors="ignore")
+
+    if result.returncode != 0:
+        logger.warning(
+            "ffprobe (json) retornou código %s após %.2fs para %s. stderr: %s",
+            result.returncode, elapsed, path, stderr[-500:],
+        )
+        return None, stderr
+
+    raw_stdout = result.stdout.decode("utf-8", errors="ignore")
+    try:
+        data = json.loads(raw_stdout or "{}")
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "Falha ao decodificar JSON do ffprobe para %s: %s", path, exc
+        )
+        return None, stderr
+
+    logger.info("ffprobe (json) concluído em %.2fs para %s", elapsed, path)
+    return data, stderr
+
+
+def _duration_from_ffmpeg_stderr(path: str, timeout: int = FFPROBE_TIMEOUT_SECONDS):
+    """Fallback: usa o próprio ffmpeg para ler a linha "Duration: HH:MM:SS.xx"
+    do stderr quando o ffprobe falha ou não retorna a duração. Isso cobre
+    casos de containers um pouco atípicos ou arquivos com metadados
+    parcialmente corrompidos que o ffprobe às vezes rejeita, mas que o
+    ffmpeg ainda consegue interpretar a partir do cabeçalho.
+
+    Retorna a duração em segundos (float) ou None se não for possível
+    determiná-la por essa via também.
+    """
+    cmd = ["ffmpeg", "-hide_banner", "-i", path]
+    logger.info("Tentando fallback de duração via 'ffmpeg -i' em: %s", path)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        logger.error(
+            "Fallback 'ffmpeg -i' travou/excedeu %ss ao analisar %s", timeout, path
+        )
+        return None
+    except FileNotFoundError:
+        logger.error("ffmpeg não encontrado no PATH ao tentar fallback de duração.")
+        return None
+    except Exception as exc:
+        logger.warning("Erro inesperado no fallback 'ffmpeg -i' para %s: %s", path, exc)
+        return None
+
+    # "ffmpeg -i" sem saída sempre retorna código != 0, então o que importa
+    # aqui é o conteúdo do stderr, não o returncode.
+    stderr = result.stderr.decode("utf-8", errors="ignore")
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", stderr)
+    if not match:
+        logger.warning(
+            "Fallback 'ffmpeg -i' não encontrou 'Duration' no stderr para %s. "
+            "Trecho do stderr: %s",
+            path, stderr[-500:],
+        )
+        return None
+
+    hours, minutes, seconds = match.groups()
+    duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    logger.info("Duração obtida via fallback 'ffmpeg -i': %.2fs para %s", duration, path)
+    return duration
+
+
+def _probe_duration(path: str) -> float:
+    """Consulta a duração do vídeo com fallback robusto em múltiplas camadas.
+
+    1) Tenta ffprobe pedindo format+streams em JSON (mais robusto do que
+       pedir só "format=duration", pois alguns arquivos só têm a duração
+       no stream de vídeo e não no container).
+    2) Se o ffprobe falhar ou não trouxer uma duração utilizável, cai para
+       o fallback de ler a linha "Duration" do stderr do próprio ffmpeg.
+    3) Só levanta VideoProcessingError se todas as abordagens falharem,
+       sempre logando os detalhes brutos (stderr) para facilitar o
+       diagnóstico do problema real (arquivo corrompido, binário ausente,
+       formato não suportado, etc.).
+    """
+    logger.info("Consultando duração do vídeo: %s", path)
+    start = time.monotonic()
+
+    data, ffprobe_stderr = _ffprobe_json(path)
+
+    duration = None
+    if data:
+        fmt_duration = (data.get("format") or {}).get("duration")
+        if fmt_duration:
+            try:
+                duration = float(fmt_duration)
+            except (TypeError, ValueError):
+                duration = None
+
+        if not duration:
+            for stream in data.get("streams", []) or []:
+                stream_duration = stream.get("duration")
+                if stream_duration:
+                    try:
+                        duration = float(stream_duration)
+                        break
+                    except (TypeError, ValueError):
+                        continue
+
+    if not duration:
+        logger.warning(
+            "ffprobe não retornou uma duração utilizável para %s (stderr: %s); "
+            "tentando fallback via 'ffmpeg -i'.",
+            path, (ffprobe_stderr or "")[-500:],
+        )
+        duration = _duration_from_ffmpeg_stderr(path)
 
     elapsed = time.monotonic() - start
 
-    if result.returncode != 0:
-        stderr = result.stderr.decode("utf-8", errors="ignore")
-        logger.error("ffprobe falhou após %.1fs: %s", elapsed, stderr[-500:])
-        raise VideoProcessingError("Não foi possível ler a duração do vídeo (ffprobe).")
-
-    try:
-        duration = float(result.stdout.decode().strip())
-    except ValueError as exc:
-        logger.error("Duração retornada pelo ffprobe é inválida: %r", result.stdout)
-        raise VideoProcessingError("Duração do vídeo inválida.") from exc
+    if not duration or duration <= 0:
+        logger.error(
+            "Não foi possível determinar a duração do vídeo %s após %.2fs "
+            "mesmo com fallback (ffprobe stderr: %s)",
+            path, elapsed, (ffprobe_stderr or "")[-500:],
+        )
+        raise VideoProcessingError(
+            "Não foi possível ler a duração do vídeo (ffprobe). O arquivo pode "
+            "estar corrompido, incompleto ou em um formato não suportado."
+        )
 
     logger.info("Duração detectada: %.2fs (consulta levou %.2fs)", duration, elapsed)
     return duration
+
+
+def validate_video_file(path: str) -> None:
+    """Valida que o arquivo em "path" é um vídeo legível pelo ffprobe, com
+    pelo menos uma stream de vídeo.
+
+    Deve ser chamada logo após o upload ou o download de um arquivo, antes
+    dele ser aceito para processamento. Levanta VideoProcessingError com
+    mensagem clara se o arquivo estiver corrompido, incompleto ou não for
+    um vídeo válido.
+    """
+    logger.info("Validando arquivo de vídeo recebido: %s", path)
+
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        logger.error("Validação falhou: arquivo ausente ou vazio (%s)", path)
+        raise VideoProcessingError(
+            "O arquivo enviado está vazio ou não foi salvo corretamente."
+        )
+
+    data, stderr = _ffprobe_json(path)
+
+    if not data:
+        logger.error(
+            "Validação falhou: ffprobe não conseguiu ler %s. stderr: %s",
+            path, (stderr or "")[-500:],
+        )
+        raise VideoProcessingError(
+            "O arquivo enviado não é um vídeo válido ou está corrompido "
+            "(ffprobe não conseguiu analisá-lo)."
+        )
+
+    streams = data.get("streams", []) or []
+    has_video_stream = any(s.get("codec_type") == "video" for s in streams)
+
+    if not has_video_stream:
+        logger.error(
+            "Validação falhou: nenhuma stream de vídeo encontrada em %s", path
+        )
+        raise VideoProcessingError(
+            "O arquivo enviado não contém nenhuma stream de vídeo válida."
+        )
+
+    logger.info("Arquivo de vídeo validado com sucesso: %s", path)
 
 
 def _clamp_atempo(factor: float) -> float:
