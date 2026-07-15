@@ -5,6 +5,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+class VideoProcessingError(Exception):
+    """Erro esperado durante o processamento de video (ex: ffmpeg falhou, arquivo invalido)."""
+    pass
+
+
 def get_video_duration(video_path: str) -> float:
     """Obtém duração do vídeo com fallback."""
     try:
