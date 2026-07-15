@@ -1,12 +1,17 @@
 import os
 import logging
-from fastapi import FastAPI
+import time
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.routers import video
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 logger = logging.getLogger("editor_video_tiktok")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +36,49 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Loga toda requisição recebida e seu tempo total de resposta.
+
+    Isso ajuda a identificar rapidamente qual chamada do frontend ficou
+    presa (por exemplo, em "Aguardando processamento") olhando os logs do
+    servidor.
+    """
+    start = time.monotonic()
+    logger.info("--> %s %s", request.method, request.url.path)
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "Requisição %s %s levantou exceção não tratada após %.2fs",
+            request.method, request.url.path, time.monotonic() - start,
+        )
+        raise
+    elapsed = time.monotonic() - start
+    logger.info(
+        "<-- %s %s status=%s em %.2fs",
+        request.method, request.url.path, response.status_code, elapsed,
+    )
+    return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Garante que qualquer erro não previsto retorne uma resposta JSON clara
+    para o frontend, em vez de deixar a requisição travada ou sem resposta.
+    """
+    logger.exception(
+        "Erro não tratado em %s %s: %s", request.method, request.url.path, exc
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Erro interno inesperado no servidor. Verifique os logs do backend."
+        },
+    )
+
 
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 
