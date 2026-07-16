@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import video
+from app.routers import generation, video
 
 logging.basicConfig(
     level=logging.INFO,
@@ -84,6 +84,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 
 app.include_router(video.router, prefix="/api/video", tags=["video"])
+app.include_router(generation.router, prefix="/api/generation", tags=["generation"])
 
 
 @app.get("/")
