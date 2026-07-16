@@ -141,6 +141,8 @@ async def process_video(
     hue_degrees: float = Form(1.0),
     color_grade: str = Form("cinematic"),
     output_fps: str = Form("29.97"),
+    smooth_motion: bool = Form(True),
+    adaptive_sharpen: bool = Form(True),
     quality_crf: int = Form(18),
 ):
     """Aplica melhorias criativas automáticas no vídeo enviado ou baixado anteriormente."""
@@ -183,6 +185,8 @@ async def process_video(
             hue_degrees=hue_degrees,
             color_grade=color_grade,
             output_fps=output_fps,
+            smooth_motion=smooth_motion,
+            adaptive_sharpen=adaptive_sharpen,
             quality_crf=quality_crf,
         )
     except video_processor.VideoProcessingError as exc:
