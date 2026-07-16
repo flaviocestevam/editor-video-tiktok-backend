@@ -135,12 +135,12 @@ async def process_video(
     color_adjust: bool = Form(True),
     fade: bool = Form(True),
     strip_metadata: bool = Form(True),
-    sensor_noise: int = Form(0),
-    crop_pixels: int = Form(0),
-    zoom_factor: float = Form(1.0),
-    hue_degrees: float = Form(0.0),
-    color_grade: str = Form("none"),
-    output_fps: str = Form("source"),
+    sensor_noise: int = Form(2),
+    crop_pixels: int = Form(4),
+    zoom_factor: float = Form(1.02),
+    hue_degrees: float = Form(1.0),
+    color_grade: str = Form("cinematic"),
+    output_fps: str = Form("29.97"),
     quality_crf: int = Form(18),
 ):
     """Aplica melhorias criativas automáticas no vídeo enviado ou baixado anteriormente."""
