@@ -1,6 +1,7 @@
 import os
 import uuid
 import logging
+from urllib.parse import urlparse
 
 import yt_dlp
 
@@ -19,7 +20,14 @@ def download_video_from_url(url: str, dest_dir: str):
     Suporta links do TikTok, YouTube Shorts e Instagram, para uso pessoal.
     Retorna uma tupla (file_id, caminho_do_arquivo_mp4).
     """
-    if not any(domain in url for domain in SUPPORTED_DOMAINS):
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError as exc:
+        raise DownloadError("URL inválida.") from exc
+    if parsed.scheme not in {"http", "https"} or not hostname or not any(
+        hostname == domain or hostname.endswith(f".{domain}") for domain in SUPPORTED_DOMAINS
+    ):
         raise DownloadError(
             "Link não suportado. Utilize links do TikTok, YouTube Shorts ou Instagram."
         )
