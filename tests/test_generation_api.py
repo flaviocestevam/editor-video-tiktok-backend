@@ -23,6 +23,8 @@ def test_generation_requires_configured_auth(monkeypatch):
 
 def test_generation_rejects_wrong_auth(monkeypatch):
     monkeypatch.setenv("VIDEO_FACTORY_API_KEY", "correct")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
     assert client.post("/api/generation/jobs", json=VALID, headers=AUTH).status_code == 401
 
 
