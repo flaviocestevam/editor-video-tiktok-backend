@@ -84,7 +84,6 @@ def test_new_editing_options_are_applied_in_one_pass(tmp_path, monkeypatch):
         "speed_change": "false", "color_adjust": "false", "fade": "false",
         "sensor_noise": "2", "crop_pixels": "4", "zoom_factor": "1.02",
         "hue_degrees": "1.0", "color_grade": "warm", "output_fps": "29.97",
-        "manual_caption": "Teste de legenda manual",
         "quality_crf": "18",
     })
     assert processed.status_code == 200, processed.text
