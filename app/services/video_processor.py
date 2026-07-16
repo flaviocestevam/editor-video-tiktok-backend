@@ -152,7 +152,7 @@ def process_video(
     if strip_metadata:
         command.extend([
             "-map_metadata", "-1", "-map_chapters", "-1", "-fflags", "+bitexact",
-            "-flags:v", "+bitexact",
+            "-flags:v", "+bitexact", "-metadata:s:v:0", "encoder=H.264",
         ])
         if not remove_audio and has_audio:
             command.extend(["-flags:a", "+bitexact"])
