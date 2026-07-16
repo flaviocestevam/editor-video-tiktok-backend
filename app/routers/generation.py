@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import json
+from urllib import error, request
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -17,10 +19,27 @@ router = APIRouter()
 JOB_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
-def require_gateway_key(authorization: str | None = Header(default=None)) -> None:
+def require_generation_auth(authorization: str | None = Header(default=None)) -> None:
     expected = os.getenv("VIDEO_FACTORY_API_KEY", "")
     supplied = authorization.removeprefix("Bearer ").strip() if authorization else ""
-    if not expected or not supplied or not secrets.compare_digest(supplied, expected):
+    if not supplied:
+        raise HTTPException(status_code=401, detail="Não autorizado.")
+    if expected and secrets.compare_digest(supplied, expected):
+        return
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    publishable_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+    if not supabase_url or not publishable_key:
+        raise HTTPException(status_code=401, detail="Não autorizado.")
+    req = request.Request(
+        f"{supabase_url}/auth/v1/user",
+        headers={"Authorization": f"Bearer {supplied}", "apikey": publishable_key},
+    )
+    try:
+        with request.urlopen(req, timeout=10) as response:
+            user = json.load(response)
+    except (error.HTTPError, error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=401, detail="Não autorizado.") from exc
+    if not isinstance(user, dict) or not user.get("id"):
         raise HTTPException(status_code=401, detail="Não autorizado.")
 
 
@@ -54,7 +73,7 @@ class GenerationRequest(BaseModel):
         return self
 
 
-@router.post("/jobs", dependencies=[Depends(require_gateway_key)], status_code=202)
+@router.post("/jobs", dependencies=[Depends(require_generation_auth)], status_code=202)
 def create_job(payload: GenerationRequest):
     try:
         result = runpod_gateway.submit(payload.model_dump(mode="json", exclude_none=True))
@@ -66,7 +85,7 @@ def create_job(payload: GenerationRequest):
     return {"id": job_id, "status": result.get("status", "IN_QUEUE")}
 
 
-@router.get("/jobs/{job_id}", dependencies=[Depends(require_gateway_key)])
+@router.get("/jobs/{job_id}", dependencies=[Depends(require_generation_auth)])
 def get_job(job_id: str):
     if not JOB_ID.fullmatch(job_id):
         raise HTTPException(status_code=422, detail="Identificador inválido.")
@@ -77,7 +96,7 @@ def get_job(job_id: str):
     return {key: result.get(key) for key in ("id", "status", "output", "error") if result.get(key) is not None}
 
 
-@router.post("/jobs/{job_id}/cancel", dependencies=[Depends(require_gateway_key)])
+@router.post("/jobs/{job_id}/cancel", dependencies=[Depends(require_generation_auth)])
 def cancel_job(job_id: str):
     if not JOB_ID.fullmatch(job_id):
         raise HTTPException(status_code=422, detail="Identificador inválido.")
