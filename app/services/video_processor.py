@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import subprocess
+import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ def _run(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
         raise VideoProcessingError("O processamento excedeu o tempo máximo permitido.") from exc
 
 
-def probe_video(video_path: str) -> tuple[float, bool]:
+def probe_video(video_path: str) -> tuple[float, bool, int, int]:
     result = _run(
         ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", video_path],
         timeout=30,
@@ -31,13 +32,16 @@ def probe_video(video_path: str) -> tuple[float, bool]:
     try:
         data = json.loads(result.stdout)
         duration = float(data["format"]["duration"])
-        has_video = any(stream.get("codec_type") == "video" for stream in data["streams"])
+        video_stream = next(stream for stream in data["streams"] if stream.get("codec_type") == "video")
+        has_video = True
         has_audio = any(stream.get("codec_type") == "audio" for stream in data["streams"])
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        width = int(video_stream["width"])
+        height = int(video_stream["height"])
+    except (KeyError, StopIteration, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise VideoProcessingError("Não foi possível identificar a duração do vídeo.") from exc
     if not has_video or duration <= 0:
         raise VideoProcessingError("O arquivo enviado não contém uma faixa de vídeo válida.")
-    return duration, has_audio
+    return duration, has_audio, width, height
 
 
 def process_video(
@@ -51,10 +55,33 @@ def process_video(
     speed_change: bool = True,
     color_adjust: bool = True,
     fade: bool = True,
+    strip_metadata: bool = True,
+    sensor_noise: int = 0,
+    crop_pixels: int = 0,
+    zoom_factor: float = 1.0,
+    hue_degrees: float = 0.0,
+    color_grade: str = "none",
+    output_fps: str = "source",
+    manual_caption: str | None = None,
+    quality_crf: int = 18,
 ) -> None:
     """Apply the API editing options and produce a browser-compatible MP4."""
-    del temp_dir  # Reserved for future multi-pass processing.
-    duration, has_audio = probe_video(input_path)
+    if not 0 <= sensor_noise <= 4:
+        raise VideoProcessingError("O ruído deve estar entre 0 e 4.")
+    if not 0 <= crop_pixels <= 8:
+        raise VideoProcessingError("O recorte deve estar entre 0 e 8 pixels por borda.")
+    if not 1.0 <= zoom_factor <= 1.05:
+        raise VideoProcessingError("O zoom deve estar entre 1.00x e 1.05x.")
+    if not -3.0 <= hue_degrees <= 3.0:
+        raise VideoProcessingError("A matiz deve estar entre -3 e 3 graus.")
+    if color_grade not in {"none", "warm", "cool", "cinematic", "vintage"}:
+        raise VideoProcessingError("Preset de cor inválido.")
+    if output_fps not in {"source", "29.97"}:
+        raise VideoProcessingError("FPS de saída inválido.")
+    if not 17 <= quality_crf <= 20:
+        raise VideoProcessingError("A qualidade CRF deve estar entre 17 e 20.")
+
+    duration, has_audio, source_width, source_height = probe_video(input_path)
     trim = min(duration * 0.025, 0.35) if random_trim and duration > 1 else 0.0
     output_duration = duration - (trim * 2)
     if output_duration <= 0.2:
@@ -64,11 +91,37 @@ def process_video(
     filters: list[str] = []
     if flip_horizontal:
         filters.append("hflip")
-    if crop_zoom:
+    # Recorte e zoom são combinados antes da escala final para evitar uma
+    # segunda codificação. As dimensões são sempre pares para yuv420p.
+    if crop_pixels or zoom_factor > 1.0:
+        ratio = 1.0 / zoom_factor
+        filters.append(
+            "crop="
+            f"trunc((iw-{crop_pixels * 2})*{ratio:.8f}/2)*2:"
+            f"trunc((ih-{crop_pixels * 2})*{ratio:.8f}/2)*2"
+        )
+        filters.append(
+            f"scale={source_width}:{source_height}:flags=lanczos"
+        )
+    elif crop_zoom:
         filters.append("crop=trunc(iw*0.96/2)*2:trunc(ih*0.96/2)*2")
-        filters.append("scale=trunc(iw/2)*2:trunc(ih/2)*2")
+        filters.append(f"scale={source_width}:{source_height}:flags=lanczos")
     if color_adjust:
         filters.append("eq=brightness=0.01:contrast=1.03:saturation=1.04")
+    if hue_degrees:
+        filters.append(f"hue=h={hue_degrees:.3f}")
+    grade_filters = {
+        "warm": "colorbalance=rs=.025:gs=.008:bs=-.018",
+        "cool": "colorbalance=rs=-.018:gs=.004:bs=.025",
+        "cinematic": "eq=contrast=1.035:saturation=.96:gamma=.99,colorbalance=rs=.012:bs=.015",
+        "vintage": "eq=contrast=.97:saturation=.88:gamma=1.015,colorbalance=rs=.022:bs=-.012",
+    }
+    if color_grade != "none":
+        filters.append(grade_filters[color_grade])
+    if sensor_noise:
+        filters.append(f"noise=alls={sensor_noise}:allf=t")
+    if output_fps == "29.97":
+        filters.append("fps=30000/1001")
     if speed != 1.0:
         filters.append(f"setpts=PTS/{speed:.6f}")
     final_duration = output_duration / speed
@@ -76,11 +129,36 @@ def process_video(
         fade_length = min(0.25, final_duration / 4)
         filters.extend([f"fade=t=in:st=0:d={fade_length:.3f}", f"fade=t=out:st={final_duration-fade_length:.3f}:d={fade_length:.3f}"])
 
+    caption_path: Path | None = None
+    if manual_caption and manual_caption.strip():
+        if len(manual_caption) > 500:
+            raise VideoProcessingError("A legenda manual deve ter no máximo 500 caracteres.")
+        Path(temp_dir).mkdir(parents=True, exist_ok=True)
+        caption_path = Path(temp_dir) / f"{uuid.uuid4().hex}.srt"
+        total_ms = max(1, round(final_duration * 1000))
+        hours, remainder = divmod(total_ms, 3_600_000)
+        minutes, remainder = divmod(remainder, 60_000)
+        seconds, milliseconds = divmod(remainder, 1000)
+        end_time = f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+        safe_caption = manual_caption.strip().replace("\r\n", "\n").replace("\r", "\n")
+        caption_path.write_text(
+            f"1\n00:00:00,000 --> {end_time}\n{safe_caption}\n",
+            encoding="utf-8",
+        )
+        escaped_path = str(caption_path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        filters.append(
+            "subtitles='" + escaped_path +
+            "':force_style='Alignment=2,MarginV=70,FontSize=18,Outline=2,Shadow=0'"
+        )
+
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{trim:.6f}", "-i", input_path, "-t", f"{output_duration:.6f}"]
     if filters:
         command.extend(["-vf", ",".join(filters)])
-    command.extend(["-map", "0:v:0", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"])
+    command.extend([
+        "-map", "0:v:0", "-c:v", "libx264", "-profile:v", "high",
+        "-preset", "medium", "-crf", str(quality_crf), "-pix_fmt", "yuv420p",
+    ])
 
     if remove_audio or not has_audio:
         command.append("-an")
@@ -95,8 +173,19 @@ def process_video(
         if audio_filters:
             command.extend(["-af", ",".join(audio_filters)])
 
+    if strip_metadata:
+        command.extend([
+            "-map_metadata", "-1", "-map_chapters", "-1", "-fflags", "+bitexact",
+            "-flags:v", "+bitexact",
+        ])
+        if not remove_audio and has_audio:
+            command.extend(["-flags:a", "+bitexact"])
     command.extend(["-movflags", "+faststart", output_path])
-    result = _run(command, timeout=300)
+    try:
+        result = _run(command, timeout=300)
+    finally:
+        if caption_path:
+            caption_path.unlink(missing_ok=True)
     if result.returncode != 0:
         logger.error("ffmpeg failed: %s", result.stderr[-4000:])
         try:
