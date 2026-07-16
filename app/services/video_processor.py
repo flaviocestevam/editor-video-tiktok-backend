@@ -62,6 +62,8 @@ def process_video(
     hue_degrees: float = 1.0,
     color_grade: str = "cinematic",
     output_fps: str = "29.97",
+    smooth_motion: bool = True,
+    adaptive_sharpen: bool = True,
     quality_crf: int = 18,
 ) -> None:
     """Apply the API editing options and produce a browser-compatible MP4."""
@@ -117,6 +119,19 @@ def process_video(
     }
     if color_grade != "none":
         filters.append(grade_filters[color_grade])
+    if smooth_motion:
+        progress = f"min(t/{max(output_duration, 0.001):.6f},1)"
+        filters.extend([
+            "scale="
+            f"w='trunc(iw*(1+0.025*{progress})/2)*2':"
+            f"h='trunc(ih*(1+0.025*{progress})/2)*2':eval=frame:flags=lanczos",
+            f"crop={source_width}:{source_height}:"
+            "x='(iw-ow)/2+sin(t*0.70)*(iw-ow)*0.12':"
+            "y='(ih-oh)/2+cos(t*0.55)*(ih-oh)*0.10'",
+        ])
+    if adaptive_sharpen:
+        sharpen_amount = 0.25 if source_width >= 1080 or source_height >= 1920 else 0.35
+        filters.append(f"unsharp=5:5:{sharpen_amount:.2f}:5:5:0.0")
     if sensor_noise:
         filters.append(f"noise=alls={sensor_noise}:allf=t")
     if output_fps == "29.97":
