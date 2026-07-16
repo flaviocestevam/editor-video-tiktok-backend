@@ -134,6 +134,15 @@ async def process_video(
     speed_change: bool = Form(True),
     color_adjust: bool = Form(True),
     fade: bool = Form(True),
+    strip_metadata: bool = Form(True),
+    sensor_noise: int = Form(0),
+    crop_pixels: int = Form(0),
+    zoom_factor: float = Form(1.0),
+    hue_degrees: float = Form(0.0),
+    color_grade: str = Form("none"),
+    output_fps: str = Form("source"),
+    manual_caption: Optional[str] = Form(None),
+    quality_crf: int = Form(18),
 ):
     """Aplica melhorias criativas automáticas no vídeo enviado ou baixado anteriormente."""
     logger.info(
@@ -168,6 +177,15 @@ async def process_video(
             speed_change=speed_change,
             color_adjust=color_adjust,
             fade=fade,
+            strip_metadata=strip_metadata,
+            sensor_noise=sensor_noise,
+            crop_pixels=crop_pixels,
+            zoom_factor=zoom_factor,
+            hue_degrees=hue_degrees,
+            color_grade=color_grade,
+            output_fps=output_fps,
+            manual_caption=manual_caption,
+            quality_crf=quality_crf,
         )
     except video_processor.VideoProcessingError as exc:
         logger.error(
