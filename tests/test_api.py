@@ -94,12 +94,17 @@ def test_new_editing_options_are_applied_in_one_pass(tmp_path, monkeypatch):
     output_path = output_dir / processed.json()["output_filename"]
     metadata = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "stream_tags=encoder",
-         "-of", "default=nw=1", str(output_path)],
+         "-show_entries", "format_tags", "-of", "default=nw=1", str(output_path)],
         capture_output=True, text=True, check=True,
     ).stdout
     assert "Lavc" not in metadata
     assert "libx264" not in metadata
     assert "encoder=H.264" in metadata
+    assert "com.apple.quicktime.make=Apple" in metadata
+    assert "com.apple.quicktime.model=iPhone 15 Pro Max" in metadata
+    assert "com.apple.quicktime.software=iOS" in metadata
+    assert "com.apple.quicktime.location.name=Rio de Janeiro, Brasil" in metadata
+    assert "com.apple.quicktime.location.ISO6709=-22.9068-043.1729+002.0/" in metadata
 
 
 def test_rejects_unsafe_processing_ranges(tmp_path, monkeypatch):
