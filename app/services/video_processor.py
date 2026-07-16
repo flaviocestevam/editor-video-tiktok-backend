@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -150,13 +151,20 @@ def process_video(
             command.extend(["-af", ",".join(audio_filters)])
 
     if strip_metadata:
+        processed_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         command.extend([
             "-map_metadata", "-1", "-map_chapters", "-1", "-fflags", "+bitexact",
-            "-flags:v", "+bitexact",
+            "-flags:v", "+bitexact", "-metadata:s:v:0", "encoder=H.264",
+            "-metadata", f"creation_time={processed_at}",
+            "-metadata", "com.apple.quicktime.make=Apple",
+            "-metadata", "com.apple.quicktime.model=iPhone 15 Pro Max",
+            "-metadata", "com.apple.quicktime.software=iOS",
+            "-metadata", "com.apple.quicktime.location.ISO6709=-22.9068-043.1729+002.0/",
+            "-metadata", "com.apple.quicktime.location.name=Rio de Janeiro, Brasil",
         ])
         if not remove_audio and has_audio:
             command.extend(["-flags:a", "+bitexact"])
-    command.extend(["-movflags", "+faststart", output_path])
+    command.extend(["-movflags", "+faststart+use_metadata_tags", output_path])
     result = _run(command, timeout=300)
     if result.returncode != 0:
         logger.error("ffmpeg failed: %s", result.stderr[-4000:])
