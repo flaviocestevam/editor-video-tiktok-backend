@@ -3,7 +3,6 @@ import logging
 import os
 import random
 import subprocess
-import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -56,13 +55,12 @@ def process_video(
     color_adjust: bool = True,
     fade: bool = True,
     strip_metadata: bool = True,
-    sensor_noise: int = 0,
-    crop_pixels: int = 0,
-    zoom_factor: float = 1.0,
-    hue_degrees: float = 0.0,
-    color_grade: str = "none",
-    output_fps: str = "source",
-    manual_caption: str | None = None,
+    sensor_noise: int = 2,
+    crop_pixels: int = 4,
+    zoom_factor: float = 1.02,
+    hue_degrees: float = 1.0,
+    color_grade: str = "cinematic",
+    output_fps: str = "29.97",
     quality_crf: int = 18,
 ) -> None:
     """Apply the API editing options and produce a browser-compatible MP4."""
@@ -129,28 +127,6 @@ def process_video(
         fade_length = min(0.25, final_duration / 4)
         filters.extend([f"fade=t=in:st=0:d={fade_length:.3f}", f"fade=t=out:st={final_duration-fade_length:.3f}:d={fade_length:.3f}"])
 
-    caption_path: Path | None = None
-    if manual_caption and manual_caption.strip():
-        if len(manual_caption) > 500:
-            raise VideoProcessingError("A legenda manual deve ter no máximo 500 caracteres.")
-        Path(temp_dir).mkdir(parents=True, exist_ok=True)
-        caption_path = Path(temp_dir) / f"{uuid.uuid4().hex}.srt"
-        total_ms = max(1, round(final_duration * 1000))
-        hours, remainder = divmod(total_ms, 3_600_000)
-        minutes, remainder = divmod(remainder, 60_000)
-        seconds, milliseconds = divmod(remainder, 1000)
-        end_time = f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
-        safe_caption = manual_caption.strip().replace("\r\n", "\n").replace("\r", "\n")
-        caption_path.write_text(
-            f"1\n00:00:00,000 --> {end_time}\n{safe_caption}\n",
-            encoding="utf-8",
-        )
-        escaped_path = str(caption_path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-        filters.append(
-            "subtitles='" + escaped_path +
-            "':force_style='Alignment=2,MarginV=70,FontSize=18,Outline=2,Shadow=0'"
-        )
-
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{trim:.6f}", "-i", input_path, "-t", f"{output_duration:.6f}"]
     if filters:
@@ -181,11 +157,7 @@ def process_video(
         if not remove_audio and has_audio:
             command.extend(["-flags:a", "+bitexact"])
     command.extend(["-movflags", "+faststart", output_path])
-    try:
-        result = _run(command, timeout=300)
-    finally:
-        if caption_path:
-            caption_path.unlink(missing_ok=True)
+    result = _run(command, timeout=300)
     if result.returncode != 0:
         logger.error("ffmpeg failed: %s", result.stderr[-4000:])
         try:
