@@ -91,6 +91,16 @@ def test_new_editing_options_are_applied_in_one_pass(tmp_path, monkeypatch):
     assert result.status_code == 200
     assert len(result.content) > 0
 
+    output_path = output_dir / processed.json()["output_filename"]
+    metadata = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream_tags=encoder",
+         "-of", "default=nw=1", str(output_path)],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "Lavc" not in metadata
+    assert "libx264" not in metadata
+    assert "encoder=H.264" in metadata
+
 
 def test_rejects_unsafe_processing_ranges(tmp_path, monkeypatch):
     upload_dir = tmp_path / "uploads"
