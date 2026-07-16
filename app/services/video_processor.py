@@ -55,12 +55,12 @@ def process_video(
     color_adjust: bool = True,
     fade: bool = True,
     strip_metadata: bool = True,
-    sensor_noise: int = 0,
-    crop_pixels: int = 0,
-    zoom_factor: float = 1.0,
-    hue_degrees: float = 0.0,
-    color_grade: str = "none",
-    output_fps: str = "source",
+    sensor_noise: int = 2,
+    crop_pixels: int = 4,
+    zoom_factor: float = 1.02,
+    hue_degrees: float = 1.0,
+    color_grade: str = "cinematic",
+    output_fps: str = "29.97",
     quality_crf: int = 18,
 ) -> None:
     """Apply the API editing options and produce a browser-compatible MP4."""
