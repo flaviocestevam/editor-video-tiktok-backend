@@ -58,10 +58,8 @@ def _round_time(value: float) -> float:
 
 def build_humor_plan(video_path: str) -> dict[str, object]:
     duration, _, width, height = video_processor.probe_video(video_path)
-    trim = min(duration * 0.025, 0.35) if duration > 1 else 0.0
-    usable = max(0.3, duration - trim * 2)
-    peak_source = dynamic_montage.legacy._detect_motion_peak(video_path, duration)
-    peak = max(0.0, min(usable, peak_source - trim))
+    usable = max(0.3, duration)
+    peak = max(0.0, min(usable, dynamic_montage.legacy._detect_motion_peak(video_path, duration)))
 
     highlight_start = max(0.35, peak - min(0.70, usable * 0.10))
     highlight_end = min(usable - 0.25, highlight_start + min(1.85, max(1.10, usable * 0.23)))
