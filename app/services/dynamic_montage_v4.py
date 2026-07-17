@@ -64,6 +64,161 @@ def _minimal_spatial_filters(
     return filters
 
 
+def _scene_color_filter(index: int) -> str:
+    """Variações pequenas por trecho: visíveis na comparação, discretas na reprodução."""
+    patterns = (
+        (0.004, 1.012, 1.010, 1.004),
+        (-0.003, 1.022, 0.988, 0.997),
+        (0.006, 1.006, 1.018, 1.006),
+        (-0.002, 1.016, 1.004, 0.994),
+        (0.003, 1.026, 0.994, 1.002),
+    )
+    brightness, contrast, saturation, gamma = patterns[index % len(patterns)]
+    return (
+        f"eq=brightness={brightness:.4f}:contrast={contrast:.4f}:"
+        f"saturation={saturation:.4f}:gamma={gamma:.4f}"
+    )
+
+
+def _reframed_item(
+    item: dict[str, float | str],
+    index: int,
+    enabled: bool,
+) -> dict[str, float | str]:
+    if not enabled or float(item.get("zoom_out", 0.0)) > 0:
+        return item
+    zooms = (1.018, 1.036, 1.052, 1.026, 1.044)
+    shifts_x = (-0.12, 0.10, -0.06, 0.16, -0.10)
+    shifts_y = (0.05, -0.08, 0.07, -0.03, 0.09)
+    style = index % len(zooms)
+    enriched = dict(item)
+    current_zoom = float(item.get("reframe_zoom", 1.0))
+    current_x = float(item.get("shift_x", 0.0))
+    current_y = float(item.get("shift_y", 0.0))
+    enriched["reframe_zoom"] = max(current_zoom, zooms[style])
+    enriched["shift_x"] = max(-0.35, min(0.35, current_x + shifts_x[style]))
+    enriched["shift_y"] = max(-0.35, min(0.35, current_y + shifts_y[style]))
+    return enriched
+
+
+def _build_originality_filter_complex(
+    *,
+    trim: float,
+    source_duration: float,
+    output_duration: float,
+    width: int,
+    height: int,
+    spatial_filters: list[str],
+    peak_source_time: float,
+    hard_cuts: bool,
+    speed_ramp: bool,
+    short_slowmo: bool,
+    short_speedup: bool,
+    freeze_frame: bool,
+    highlight_replay: bool,
+    output_fps: str,
+    fade: bool,
+    dynamic_reframe: bool,
+    animated_grain_overlay: bool,
+    scene_color_variation: bool,
+    light_texture_overlay: bool,
+) -> tuple[str, float]:
+    plan = v2._build_plan(
+        output_duration,
+        legacy._clamp(peak_source_time - trim, 0.0, output_duration),
+        hard_cuts=hard_cuts,
+        speed_ramp=speed_ramp,
+        short_slowmo=short_slowmo,
+        short_speedup=short_speedup,
+        freeze_frame=freeze_frame,
+        highlight_replay=highlight_replay,
+    )
+    if not plan:
+        plan = [{"kind": "clip", "start": 0.0, "end": output_duration, "speed": 1.0}]
+
+    labels = "".join(f"[s{i}]" for i in range(len(plan)))
+    base = [
+        f"trim=start={trim:.6f}:end={source_duration - trim:.6f}",
+        "setpts=PTS-STARTPTS",
+        *spatial_filters,
+        "setsar=1",
+    ]
+    graph = [f"[0:v]{','.join(base)},split={len(plan)}{labels}"]
+    outputs: list[str] = []
+    final_duration = 0.0
+
+    for index, raw_item in enumerate(plan):
+        item = _reframed_item(raw_item, index, dynamic_reframe)
+        start = float(item["start"])
+        end = float(item["end"])
+        label = f"v{index}"
+        outputs.append(f"[{label}]")
+        color_filter = _scene_color_filter(index) if scene_color_variation else ""
+
+        if item["kind"] == "freeze":
+            freeze_duration = float(item["duration"])
+            filters = [
+                f"trim=start={start:.6f}:end={end:.6f}",
+                "setpts=PTS-STARTPTS",
+                f"tpad=stop_mode=clone:stop_duration={freeze_duration:.6f}",
+            ]
+            if color_filter:
+                filters.append(color_filter)
+            filters.extend(["setsar=1", "settb=AVTB"])
+            graph.append(f"[s{index}]{','.join(filters)}[{label}]")
+            final_duration += end - start + freeze_duration
+            continue
+
+        speed = float(item.get("speed", 1.0))
+        segment_duration = (end - start) / speed
+        filters = [
+            f"trim=start={start:.6f}:end={end:.6f}",
+            f"setpts=(PTS-STARTPTS)/{speed:.6f}",
+        ]
+        reframe = v2._segment_reframe_filter(
+            item=item,
+            width=width,
+            height=height,
+            output_duration=segment_duration,
+        )
+        if reframe:
+            filters.append(reframe)
+        if color_filter:
+            filters.append(color_filter)
+        filters.extend(["setsar=1", "settb=AVTB"])
+        graph.append(f"[s{index}]{','.join(filters)}[{label}]")
+        final_duration += segment_duration
+
+    post: list[str] = []
+    if output_fps == "29.97":
+        post.append("fps=30000/1001")
+    if fade and final_duration > 0.4:
+        length = min(0.22, final_duration / 4)
+        post.extend(
+            [
+                f"fade=t=in:st=0:d={length:.3f}",
+                f"fade=t=out:st={max(0.0, final_duration - length):.3f}:d={length:.3f}",
+            ]
+        )
+    if animated_grain_overlay:
+        post.append("noise=alls=1:allf=t+u")
+    if light_texture_overlay:
+        post.extend(
+            [
+                "eq=brightness='0.004*sin(2*PI*t/5)':eval=frame",
+                "vignette=angle='PI/18+0.008*sin(t*0.7)':"
+                "x0='w/2+0.018*w*sin(t*0.31)':"
+                "y0='h/2+0.014*h*cos(t*0.27)':eval=frame",
+            ]
+        )
+    post.append("format=yuv420p")
+    graph.append(
+        f"{''.join(outputs)}concat=n={len(plan)}:v=1:a=0[montage];"
+        f"[montage]{','.join(post)}[vout]"
+    )
+    return ";".join(graph), final_duration
+
+
 def _run_attempt(
     *,
     input_path: str,
@@ -136,6 +291,10 @@ def process_dynamic_video(
     short_speedup: bool = True,
     freeze_frame: bool = True,
     highlight_replay: bool = True,
+    dynamic_reframe: bool = True,
+    animated_grain_overlay: bool = True,
+    scene_color_variation: bool = True,
+    light_texture_overlay: bool = True,
     quality_crf: int = 18,
 ) -> None:
     if not 0 <= sensor_noise <= 4:
@@ -205,7 +364,7 @@ def process_dynamic_video(
                 color_grade=color_grade,
             )
 
-        filter_complex, final_duration = v2._build_filter_complex(
+        filter_complex, final_duration = _build_originality_filter_complex(
             trim=trim,
             source_duration=duration,
             output_duration=output_duration,
@@ -221,9 +380,13 @@ def process_dynamic_video(
             highlight_replay=highlight_replay,
             output_fps=output_fps,
             fade=fade,
+            dynamic_reframe=dynamic_reframe,
+            animated_grain_overlay=animated_grain_overlay,
+            scene_color_variation=scene_color_variation,
+            light_texture_overlay=light_texture_overlay,
         )
         logger.info(
-            "Dynamic v4 attempt=%s rotation=%s coded=%sx%s output=%sx%s peak=%.3fs duration=%.3fs",
+            "Dynamic v5 attempt=%s rotation=%s coded=%sx%s output=%sx%s peak=%.3fs duration=%.3fs",
             safe_mode + 1,
             rotation,
             coded_width,
@@ -255,7 +418,7 @@ def process_dynamic_video(
                 )
             return
         errors.append(error)
-        logger.error("Dynamic v4 attempt %s failed: %s", safe_mode + 1, error)
+        logger.error("Dynamic v5 attempt %s failed: %s", safe_mode + 1, error)
 
     try:
         os.remove(output_path)
