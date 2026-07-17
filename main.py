@@ -26,7 +26,7 @@ for directory in (STORAGE_DIR, UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR):
 app = FastAPI(
     title="Editor Vídeo TikTok - Backend",
     description="API para upload, download e edição criativa automática de vídeos curtos para uso pessoal.",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()]
@@ -95,9 +95,14 @@ async def root():
         "status": "online",
         "docs": "/docs",
         "humor_mode": "/api/humor/plan",
+        "dynamic_montage": "v4-mobile-compatible",
     }
 
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "version": "1.2.0",
+        "dynamic_montage": "v4-mobile-compatible",
+    }
