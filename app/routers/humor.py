@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 import uuid
@@ -17,6 +18,7 @@ STORAGE_DIR = os.path.join(BASE_DIR, "storage")
 UPLOAD_DIR = os.path.join(STORAGE_DIR, "uploads")
 OUTPUT_DIR = os.path.join(STORAGE_DIR, "outputs")
 TEMP_DIR = os.path.join(STORAGE_DIR, "temp")
+API_VERSION = "combined-humor-v3"
 
 
 def _find_upload_by_id(file_id: str) -> Optional[str]:
@@ -44,11 +46,14 @@ async def preview_source(file_id: str):
 @router.post("/plan")
 async def create_humor_plan(
     file_id: str = Form(...),
+    remove_audio: bool = Form(True),
     flip_horizontal: bool = Form(True),
     random_trim: bool = Form(True),
     crop_zoom: bool = Form(True),
+    speed_change: bool = Form(True),
     color_adjust: bool = Form(True),
     fade: bool = Form(True),
+    strip_metadata: bool = Form(True),
     sensor_noise: int = Form(2),
     crop_pixels: int = Form(4),
     zoom_factor: float = Form(1.02),
@@ -57,6 +62,7 @@ async def create_humor_plan(
     output_fps: str = Form("29.97"),
     smooth_motion: bool = Form(True),
     adaptive_sharpen: bool = Form(True),
+    dynamic_montage_enabled: bool = Form(True),
     hard_cuts: bool = Form(True),
     speed_ramp: bool = Form(True),
     short_slowmo: bool = Form(True),
@@ -65,7 +71,7 @@ async def create_humor_plan(
     highlight_replay: bool = Form(True),
     quality_crf: int = Form(18),
 ):
-    """Cria a montagem dinâmica que servirá de prévia e base do vídeo com humor."""
+    """Cria a única montagem usada na prévia e no vídeo final com textos."""
     input_path = _find_upload_by_id(file_id)
     if not input_path:
         raise HTTPException(status_code=404, detail="Arquivo não encontrado. Faça upload primeiro.")
@@ -73,31 +79,57 @@ async def create_humor_plan(
     preview_filename = f"humor-preview-{uuid.uuid4().hex}.mp4"
     preview_path = os.path.join(OUTPUT_DIR, preview_filename)
     try:
-        dynamic_montage.process_dynamic_video(
-            input_path=input_path,
-            output_path=preview_path,
-            flip_horizontal=flip_horizontal,
-            random_trim=random_trim,
-            crop_zoom=crop_zoom,
-            color_adjust=color_adjust,
-            fade=fade,
-            strip_metadata=False,
-            sensor_noise=sensor_noise,
-            crop_pixels=crop_pixels,
-            zoom_factor=zoom_factor,
-            hue_degrees=hue_degrees,
-            color_grade=color_grade,
-            output_fps=output_fps,
-            smooth_motion=smooth_motion,
-            adaptive_sharpen=adaptive_sharpen,
-            hard_cuts=hard_cuts,
-            speed_ramp=speed_ramp,
-            short_slowmo=short_slowmo,
-            short_speedup=short_speedup,
-            freeze_frame=freeze_frame,
-            highlight_replay=highlight_replay,
-            quality_crf=quality_crf,
-        )
+        if dynamic_montage_enabled:
+            dynamic_montage.process_dynamic_video(
+                input_path=input_path,
+                output_path=preview_path,
+                flip_horizontal=flip_horizontal,
+                random_trim=random_trim,
+                crop_zoom=crop_zoom,
+                color_adjust=color_adjust,
+                fade=fade,
+                strip_metadata=strip_metadata,
+                sensor_noise=sensor_noise,
+                crop_pixels=crop_pixels,
+                zoom_factor=zoom_factor,
+                hue_degrees=hue_degrees,
+                color_grade=color_grade,
+                output_fps=output_fps,
+                smooth_motion=smooth_motion,
+                adaptive_sharpen=adaptive_sharpen,
+                hard_cuts=hard_cuts,
+                speed_ramp=speed_change and speed_ramp,
+                short_slowmo=speed_change and short_slowmo,
+                short_speedup=speed_change and short_speedup,
+                freeze_frame=freeze_frame,
+                highlight_replay=highlight_replay,
+                quality_crf=quality_crf,
+            )
+            audio_removed = True
+        else:
+            video_processor.process_video(
+                input_path=input_path,
+                output_path=preview_path,
+                temp_dir=TEMP_DIR,
+                remove_audio=remove_audio,
+                flip_horizontal=flip_horizontal,
+                random_trim=random_trim,
+                crop_zoom=crop_zoom,
+                speed_change=speed_change,
+                color_adjust=color_adjust,
+                fade=fade,
+                strip_metadata=strip_metadata,
+                sensor_noise=sensor_noise,
+                crop_pixels=crop_pixels,
+                zoom_factor=zoom_factor,
+                hue_degrees=hue_degrees,
+                color_grade=color_grade,
+                output_fps=output_fps,
+                smooth_motion=smooth_motion,
+                adaptive_sharpen=adaptive_sharpen,
+                quality_crf=quality_crf,
+            )
+            audio_removed = remove_audio
         plan = humor_planner.build_humor_plan(preview_path)
     except video_processor.VideoProcessingError as exc:
         try:
@@ -106,9 +138,14 @@ async def create_humor_plan(
             pass
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    plan["preview_filename"] = preview_filename
-    plan["preview_url"] = f"/api/video/result/{preview_filename}"
-    plan["combined_flow"] = True
+    plan.update({
+        "preview_filename": preview_filename,
+        "preview_url": f"/api/video/result/{preview_filename}",
+        "combined_flow": True,
+        "api_version": API_VERSION,
+        "audio_removed": audio_removed,
+        "dynamic_montage_enabled": dynamic_montage_enabled,
+    })
     return plan
 
 
@@ -119,7 +156,7 @@ async def render_humor_tutorial(
     script_json: str = Form(...),
     quality_crf: int = Form(18),
 ):
-    """Adiciona as frases aprovadas sobre a mesma montagem dinâmica da prévia."""
+    """Adiciona as frases aprovadas sobre a mesma montagem exibida na prévia."""
     if not _find_upload_by_id(file_id):
         raise HTTPException(status_code=404, detail="Arquivo original não encontrado.")
     montage_path = _find_montage(montage_filename)
@@ -128,11 +165,19 @@ async def render_humor_tutorial(
     if not 17 <= quality_crf <= 20:
         raise HTTPException(status_code=400, detail="A qualidade CRF deve estar entre 17 e 20.")
 
+    try:
+        submitted = json.loads(script_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Roteiro de frases inválido.") from exc
+    requested_count = len(submitted) if isinstance(submitted, list) else 0
+    if requested_count <= 0:
+        raise HTTPException(status_code=400, detail="Nenhuma frase foi enviada para o vídeo final.")
+
     output_filename = f"{uuid.uuid4().hex}.mp4"
     output_path = os.path.join(OUTPUT_DIR, output_filename)
     started = time.monotonic()
     try:
-        humor_renderer.render_captioned_video(
+        render_info = humor_renderer.render_captioned_video(
             input_path=montage_path,
             output_path=output_path,
             temp_dir=TEMP_DIR,
@@ -147,4 +192,7 @@ async def render_humor_tutorial(
         "download_url": f"/api/video/result/{output_filename}",
         "mode": "montagem_dinamica_com_tutorial_humor",
         "processing_seconds": round(time.monotonic() - started, 2),
+        "api_version": API_VERSION,
+        "requested_caption_count": requested_count,
+        **render_info,
     }
