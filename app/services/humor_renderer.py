@@ -32,12 +32,28 @@ def _clean_text(value: Any) -> str:
 def _wrap_text(text: str, width: int) -> str:
     if not text:
         return ""
-    max_chars = 32 if width <= 720 else 38
+    max_chars = 24 if width <= 720 else 30
+    if len(text) <= max_chars:
+        return text
+
+    words = text.split()
+    best: tuple[int, str, str] | None = None
+    for index in range(1, len(words)):
+        first = " ".join(words[:index])
+        second = " ".join(words[index:])
+        if len(first) <= max_chars + 5 and len(second) <= max_chars + 5:
+            score = abs(len(first) - len(second))
+            if best is None or score < best[0]:
+                best = (score, first, second)
+    if best:
+        return f"{best[1]}\n{best[2]}"
+
     lines = textwrap.wrap(text, width=max_chars, break_long_words=False, break_on_hyphens=False)
     if len(lines) > 2:
-        lines = [lines[0], " ".join(lines[1:])]
-        if len(lines[1]) > max_chars + 8:
-            lines[1] = lines[1][: max_chars + 5].rstrip() + "…"
+        second = " ".join(lines[1:])
+        if len(second) > max_chars + 5:
+            second = second[: max_chars + 2].rstrip() + "…"
+        lines = [lines[0], second]
     return "\n".join(lines[:2])
 
 
@@ -78,7 +94,7 @@ def _y_expression(position: str) -> str:
 
 def _drawtext_filters(script: list[dict[str, Any]], temp_dir: str, width: int) -> tuple[list[str], list[str]]:
     font = _font_path().replace("\\", "/").replace(":", "\\:")
-    fontsize = max(34, min(58, round(width * 0.072)))
+    fontsize = max(32, min(52, round(width * 0.061)))
     filters: list[str] = []
     files: list[str] = []
     Path(temp_dir).mkdir(parents=True, exist_ok=True)
@@ -92,10 +108,10 @@ def _drawtext_filters(script: list[dict[str, Any]], temp_dir: str, width: int) -
         filters.append(
             "drawtext="
             f"fontfile='{font}':textfile='{escaped_path}':reload=0:"
-            f"fontsize={fontsize}:fontcolor=white:line_spacing=10:"
-            "borderw=6:bordercolor=black@0.96:"
+            f"fontsize={fontsize}:fontcolor=white:line_spacing=8:"
+            "borderw=5:bordercolor=black@0.96:"
             "shadowx=3:shadowy=3:shadowcolor=black@0.75:"
-            "box=1:boxcolor=black@0.18:boxborderw=18:"
+            "box=1:boxcolor=black@0.16:boxborderw=16:"
             "x=(w-text_w)/2:"
             f"y={_y_expression(item['position'])}:"
             f"enable='between(t,{item['start']:.3f},{item['end']:.3f})'"
