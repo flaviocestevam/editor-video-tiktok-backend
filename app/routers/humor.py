@@ -42,7 +42,30 @@ async def preview_source(file_id: str):
 
 
 @router.post("/plan")
-async def create_humor_plan(file_id: str = Form(...)):
+async def create_humor_plan(
+    file_id: str = Form(...),
+    flip_horizontal: bool = Form(True),
+    random_trim: bool = Form(True),
+    crop_zoom: bool = Form(True),
+    color_adjust: bool = Form(True),
+    fade: bool = Form(True),
+    sensor_noise: int = Form(2),
+    crop_pixels: int = Form(4),
+    zoom_factor: float = Form(1.02),
+    hue_degrees: float = Form(1.0),
+    color_grade: str = Form("cinematic"),
+    output_fps: str = Form("29.97"),
+    smooth_motion: bool = Form(True),
+    adaptive_sharpen: bool = Form(True),
+    hard_cuts: bool = Form(True),
+    speed_ramp: bool = Form(True),
+    short_slowmo: bool = Form(True),
+    short_speedup: bool = Form(True),
+    freeze_frame: bool = Form(True),
+    highlight_replay: bool = Form(True),
+    quality_crf: int = Form(18),
+):
+    """Cria a montagem dinâmica que servirá de prévia e base do vídeo com humor."""
     input_path = _find_upload_by_id(file_id)
     if not input_path:
         raise HTTPException(status_code=404, detail="Arquivo não encontrado. Faça upload primeiro.")
@@ -53,27 +76,27 @@ async def create_humor_plan(file_id: str = Form(...)):
         dynamic_montage.process_dynamic_video(
             input_path=input_path,
             output_path=preview_path,
-            flip_horizontal=True,
-            random_trim=True,
-            crop_zoom=True,
-            color_adjust=True,
-            fade=True,
+            flip_horizontal=flip_horizontal,
+            random_trim=random_trim,
+            crop_zoom=crop_zoom,
+            color_adjust=color_adjust,
+            fade=fade,
             strip_metadata=False,
-            sensor_noise=2,
-            crop_pixels=4,
-            zoom_factor=1.02,
-            hue_degrees=1.0,
-            color_grade="cinematic",
-            output_fps="29.97",
-            smooth_motion=True,
-            adaptive_sharpen=True,
-            hard_cuts=True,
-            speed_ramp=True,
-            short_slowmo=True,
-            short_speedup=True,
-            freeze_frame=True,
-            highlight_replay=True,
-            quality_crf=18,
+            sensor_noise=sensor_noise,
+            crop_pixels=crop_pixels,
+            zoom_factor=zoom_factor,
+            hue_degrees=hue_degrees,
+            color_grade=color_grade,
+            output_fps=output_fps,
+            smooth_motion=smooth_motion,
+            adaptive_sharpen=adaptive_sharpen,
+            hard_cuts=hard_cuts,
+            speed_ramp=speed_ramp,
+            short_slowmo=short_slowmo,
+            short_speedup=short_speedup,
+            freeze_frame=freeze_frame,
+            highlight_replay=highlight_replay,
+            quality_crf=quality_crf,
         )
         plan = humor_planner.build_humor_plan(preview_path)
     except video_processor.VideoProcessingError as exc:
@@ -85,6 +108,7 @@ async def create_humor_plan(file_id: str = Form(...)):
 
     plan["preview_filename"] = preview_filename
     plan["preview_url"] = f"/api/video/result/{preview_filename}"
+    plan["combined_flow"] = True
     return plan
 
 
@@ -95,6 +119,7 @@ async def render_humor_tutorial(
     script_json: str = Form(...),
     quality_crf: int = Form(18),
 ):
+    """Adiciona as frases aprovadas sobre a mesma montagem dinâmica da prévia."""
     if not _find_upload_by_id(file_id):
         raise HTTPException(status_code=404, detail="Arquivo original não encontrado.")
     montage_path = _find_montage(montage_filename)
@@ -120,6 +145,6 @@ async def render_humor_tutorial(
     return {
         "output_filename": output_filename,
         "download_url": f"/api/video/result/{output_filename}",
-        "mode": "tutorial_humor",
+        "mode": "montagem_dinamica_com_tutorial_humor",
         "processing_seconds": round(time.monotonic() - started, 2),
     }
