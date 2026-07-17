@@ -39,6 +39,8 @@ PHRASE_BANK: dict[str, list[str]] = {
     ],
 }
 
+DEFAULT_ENABLED = {"opening", "highlight", "replay", "ending"}
+
 
 @dataclass(frozen=True)
 class Moment:
@@ -91,7 +93,7 @@ def build_humor_plan(video_path: str) -> dict[str, object]:
             "position": moment.position,
             "suggestions": moment.suggestions,
             "selected_text": moment.suggestions[0],
-            "enabled": True,
+            "enabled": moment.id in DEFAULT_ENABLED,
         })
 
     return {
