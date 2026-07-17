@@ -29,12 +29,12 @@ def _clean_text(value: Any) -> str:
     return text[:150]
 
 
-def _wrap_text(text: str, width: int) -> str:
+def _wrap_text(text: str, width: int) -> list[str]:
     if not text:
-        return ""
+        return []
     max_chars = 24 if width <= 720 else 30
     if len(text) <= max_chars:
-        return text
+        return [text]
 
     words = text.split()
     best: tuple[int, str, str] | None = None
@@ -46,7 +46,7 @@ def _wrap_text(text: str, width: int) -> str:
             if best is None or score < best[0]:
                 best = (score, first, second)
     if best:
-        return f"{best[1]}\n{best[2]}"
+        return [best[1], best[2]]
 
     lines = textwrap.wrap(text, width=max_chars, break_long_words=False, break_on_hyphens=False)
     if len(lines) > 2:
@@ -54,7 +54,7 @@ def _wrap_text(text: str, width: int) -> str:
         if len(second) > max_chars + 5:
             second = second[: max_chars + 2].rstrip() + "…"
         lines = [lines[0], second]
-    return "\n".join(lines[:2])
+    return lines[:2]
 
 
 def _safe_script(script_json: str, duration: float, width: int) -> list[dict[str, Any]]:
@@ -69,8 +69,8 @@ def _safe_script(script_json: str, duration: float, width: int) -> list[dict[str
     for item in raw[:8]:
         if not isinstance(item, dict) or not bool(item.get("enabled", True)):
             continue
-        text = _wrap_text(_clean_text(item.get("text") or item.get("selected_text")), width)
-        if not text:
+        lines = _wrap_text(_clean_text(item.get("text") or item.get("selected_text")), width)
+        if not lines:
             continue
         try:
             start = max(0.0, min(float(item.get("start", 0)), duration))
@@ -80,16 +80,25 @@ def _safe_script(script_json: str, duration: float, width: int) -> list[dict[str
         position = str(item.get("position", "bottom"))
         if position not in {"top", "middle", "bottom"}:
             position = "bottom"
-        safe.append({"text": text, "start": start, "end": end, "position": position})
+        safe.append({"lines": lines, "start": start, "end": end, "position": position})
     return safe
 
 
-def _y_expression(position: str) -> str:
+def _y_expression(position: str, line_index: int, line_count: int, fontsize: int) -> str:
+    gap = max(6, round(fontsize * 0.18))
+    if line_count == 1:
+        if position == "top":
+            return "h*0.10"
+        if position == "middle":
+            return "(h-text_h)/2"
+        return "h-text_h-h*0.13"
+
+    step = fontsize + gap
     if position == "top":
-        return "h*0.10"
+        return f"h*0.10+{line_index * step}"
     if position == "middle":
-        return "(h-text_h)/2"
-    return "h-text_h-h*0.13"
+        return f"h/2-{step / 2:.1f}+{line_index * step}"
+    return f"h-h*0.13-{2 * fontsize + gap}+{line_index * step}"
 
 
 def _drawtext_filters(script: list[dict[str, Any]], temp_dir: str, width: int) -> tuple[list[str], list[str]]:
@@ -100,22 +109,24 @@ def _drawtext_filters(script: list[dict[str, Any]], temp_dir: str, width: int) -
     Path(temp_dir).mkdir(parents=True, exist_ok=True)
 
     for item in script:
-        path = os.path.join(temp_dir, f"caption-{uuid.uuid4().hex}.txt")
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(item["text"])
-        files.append(path)
-        escaped_path = path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-        filters.append(
-            "drawtext="
-            f"fontfile='{font}':textfile='{escaped_path}':reload=0:"
-            f"fontsize={fontsize}:fontcolor=white:line_spacing=8:"
-            "borderw=5:bordercolor=black@0.96:"
-            "shadowx=3:shadowy=3:shadowcolor=black@0.75:"
-            "box=1:boxcolor=black@0.16:boxborderw=16:"
-            "x=(w-text_w)/2:"
-            f"y={_y_expression(item['position'])}:"
-            f"enable='between(t,{item['start']:.3f},{item['end']:.3f})'"
-        )
+        lines = item["lines"]
+        for line_index, line in enumerate(lines):
+            path = os.path.join(temp_dir, f"caption-{uuid.uuid4().hex}.txt")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(line)
+            files.append(path)
+            escaped_path = path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+            filters.append(
+                "drawtext="
+                f"fontfile='{font}':textfile='{escaped_path}':reload=0:"
+                f"fontsize={fontsize}:fontcolor=white:"
+                "borderw=5:bordercolor=black@0.96:"
+                "shadowx=3:shadowy=3:shadowcolor=black@0.75:"
+                "box=1:boxcolor=black@0.16:boxborderw=16:"
+                "x=(w-text_w)/2:"
+                f"y={_y_expression(item['position'], line_index, len(lines), fontsize)}:"
+                f"enable='between(t,{item['start']:.3f},{item['end']:.3f})'"
+            )
     return filters, files
 
 
