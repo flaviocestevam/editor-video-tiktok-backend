@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import generation, video
+from app.routers import generation, humor, video
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,7 +26,7 @@ for directory in (STORAGE_DIR, UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR):
 app = FastAPI(
     title="Editor Vídeo TikTok - Backend",
     description="API para upload, download e edição criativa automática de vídeos curtos para uso pessoal.",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()]
@@ -84,6 +84,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 
 app.include_router(video.router, prefix="/api/video", tags=["video"])
+app.include_router(humor.router, prefix="/api/humor", tags=["humor"])
 app.include_router(generation.router, prefix="/api/generation", tags=["generation"])
 
 
@@ -93,6 +94,7 @@ async def root():
         "app": "Editor Vídeo TikTok - Backend",
         "status": "online",
         "docs": "/docs",
+        "humor_mode": "/api/humor/plan",
     }
 
 

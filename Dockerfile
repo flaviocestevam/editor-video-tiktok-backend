@@ -1,8 +1,11 @@
 FROM python:3.11-slim
 
-# Instala ffmpeg e ffprobe de forma completa
+# Instala FFmpeg, fontconfig e a fonte Lato usada nos textos dos Reels.
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    fontconfig \
+    fonts-lato \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
