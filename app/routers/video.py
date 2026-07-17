@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse
 
-from app.services import video_processor
+from app.services import dynamic_montage, video_processor
 from app.services.downloader import download_video_from_url, DownloadError
 
 logger = logging.getLogger("editor_video_tiktok.video")
@@ -143,14 +143,21 @@ async def process_video(
     output_fps: str = Form("29.97"),
     smooth_motion: bool = Form(True),
     adaptive_sharpen: bool = Form(True),
+    dynamic_montage_enabled: bool = Form(False),
+    hard_cuts: bool = Form(True),
+    speed_ramp: bool = Form(True),
+    short_slowmo: bool = Form(True),
+    short_speedup: bool = Form(True),
+    freeze_frame: bool = Form(True),
+    highlight_replay: bool = Form(True),
     quality_crf: int = Form(18),
 ):
     """Aplica melhorias criativas automáticas no vídeo enviado ou baixado anteriormente."""
     logger.info(
-        "POST /process recebido: file_id=%s remove_audio=%s flip=%s random_trim=%s "
-        "crop_zoom=%s speed_change=%s color_adjust=%s fade=%s",
-        file_id, remove_audio, flip_horizontal, random_trim, crop_zoom,
-        speed_change, color_adjust, fade,
+        "POST /process recebido: file_id=%s montage=%s remove_audio=%s flip=%s "
+        "random_trim=%s crop_zoom=%s speed_change=%s color_adjust=%s fade=%s",
+        file_id, dynamic_montage_enabled, remove_audio, flip_horizontal,
+        random_trim, crop_zoom, speed_change, color_adjust, fade,
     )
 
     input_path = _find_upload_by_id(file_id)
@@ -167,28 +174,55 @@ async def process_video(
     logger.info("Iniciando etapa de processamento (file_id=%s) -> %s", file_id, output_path)
 
     try:
-        video_processor.process_video(
-            input_path=input_path,
-            output_path=output_path,
-            temp_dir=TEMP_DIR,
-            remove_audio=remove_audio,
-            flip_horizontal=flip_horizontal,
-            random_trim=random_trim,
-            crop_zoom=crop_zoom,
-            speed_change=speed_change,
-            color_adjust=color_adjust,
-            fade=fade,
-            strip_metadata=strip_metadata,
-            sensor_noise=sensor_noise,
-            crop_pixels=crop_pixels,
-            zoom_factor=zoom_factor,
-            hue_degrees=hue_degrees,
-            color_grade=color_grade,
-            output_fps=output_fps,
-            smooth_motion=smooth_motion,
-            adaptive_sharpen=adaptive_sharpen,
-            quality_crf=quality_crf,
-        )
+        if dynamic_montage_enabled:
+            dynamic_montage.process_dynamic_video(
+                input_path=input_path,
+                output_path=output_path,
+                flip_horizontal=flip_horizontal,
+                random_trim=random_trim,
+                crop_zoom=crop_zoom,
+                color_adjust=color_adjust,
+                fade=fade,
+                strip_metadata=strip_metadata,
+                sensor_noise=sensor_noise,
+                crop_pixels=crop_pixels,
+                zoom_factor=zoom_factor,
+                hue_degrees=hue_degrees,
+                color_grade=color_grade,
+                output_fps=output_fps,
+                smooth_motion=smooth_motion,
+                adaptive_sharpen=adaptive_sharpen,
+                hard_cuts=hard_cuts,
+                speed_ramp=speed_ramp,
+                short_slowmo=short_slowmo,
+                short_speedup=short_speedup,
+                freeze_frame=freeze_frame,
+                highlight_replay=highlight_replay,
+                quality_crf=quality_crf,
+            )
+        else:
+            video_processor.process_video(
+                input_path=input_path,
+                output_path=output_path,
+                temp_dir=TEMP_DIR,
+                remove_audio=remove_audio,
+                flip_horizontal=flip_horizontal,
+                random_trim=random_trim,
+                crop_zoom=crop_zoom,
+                speed_change=speed_change,
+                color_adjust=color_adjust,
+                fade=fade,
+                strip_metadata=strip_metadata,
+                sensor_noise=sensor_noise,
+                crop_pixels=crop_pixels,
+                zoom_factor=zoom_factor,
+                hue_degrees=hue_degrees,
+                color_grade=color_grade,
+                output_fps=output_fps,
+                smooth_motion=smooth_motion,
+                adaptive_sharpen=adaptive_sharpen,
+                quality_crf=quality_crf,
+            )
     except video_processor.VideoProcessingError as exc:
         logger.error(
             "Falha controlada ao processar vídeo (file_id=%s) após %.2fs: %s",
@@ -212,6 +246,7 @@ async def process_video(
     return {
         "output_filename": output_filename,
         "download_url": f"/api/video/result/{output_filename}",
+        "dynamic_montage": dynamic_montage_enabled,
     }
 
 
