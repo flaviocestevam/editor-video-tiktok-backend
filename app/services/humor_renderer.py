@@ -7,7 +7,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from app.services import dynamic_montage
 from app.services import video_processor
 
 
@@ -104,7 +103,7 @@ def _drawtext_filters(script: list[dict[str, Any]], temp_dir: str, width: int) -
     return filters, files
 
 
-def render_humor_video(
+def render_captioned_video(
     *,
     input_path: str,
     output_path: str,
@@ -113,48 +112,15 @@ def render_humor_video(
     quality_crf: int = 18,
 ) -> None:
     duration, _, width, _ = video_processor.probe_video(input_path)
-    script = _safe_script(script_json, duration + 3.0, width)
+    script = _safe_script(script_json, duration, width)
     if not script:
         raise video_processor.VideoProcessingError("Selecione ao menos uma frase para o tutorial.")
 
-    Path(temp_dir).mkdir(parents=True, exist_ok=True)
-    intermediate = os.path.join(temp_dir, f"montage-{uuid.uuid4().hex}.mp4")
-    text_files: list[str] = []
+    filters, text_files = _drawtext_filters(script, temp_dir, width)
     try:
-        dynamic_montage.process_dynamic_video(
-            input_path=input_path,
-            output_path=intermediate,
-            flip_horizontal=True,
-            random_trim=True,
-            crop_zoom=True,
-            color_adjust=True,
-            fade=True,
-            strip_metadata=False,
-            sensor_noise=2,
-            crop_pixels=4,
-            zoom_factor=1.02,
-            hue_degrees=1.0,
-            color_grade="cinematic",
-            output_fps="29.97",
-            smooth_motion=True,
-            adaptive_sharpen=True,
-            hard_cuts=True,
-            speed_ramp=True,
-            short_slowmo=True,
-            short_speedup=True,
-            freeze_frame=True,
-            highlight_replay=True,
-            quality_crf=quality_crf,
-        )
-        edited_duration, _, edited_width, _ = video_processor.probe_video(intermediate)
-        script = _safe_script(script_json, edited_duration, edited_width)
-        filters, text_files = _drawtext_filters(script, temp_dir, edited_width)
-        if not filters:
-            raise video_processor.VideoProcessingError("Nenhuma frase válida foi aprovada.")
-
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         command = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", intermediate,
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", input_path,
             "-vf", ",".join(filters),
             "-map", "0:v:0", "-c:v", "libx264", "-profile:v", "high",
             "-preset", "medium", "-crf", str(quality_crf), "-pix_fmt", "yuv420p",
@@ -167,7 +133,7 @@ def render_humor_video(
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
             raise video_processor.VideoProcessingError("O tutorial não gerou um arquivo válido.")
     finally:
-        for path in [intermediate, *text_files]:
+        for path in text_files:
             try:
                 os.remove(path)
             except FileNotFoundError:
