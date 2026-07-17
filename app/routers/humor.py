@@ -6,6 +6,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Form, HTTPException
+from fastapi.responses import FileResponse
 
 from app.services import humor_planner, humor_renderer, video_processor
 
@@ -22,6 +23,14 @@ def _find_upload_by_id(file_id: str) -> Optional[str]:
     safe_id = os.path.basename(file_id)
     candidate = os.path.join(UPLOAD_DIR, f"{safe_id}.mp4")
     return candidate if os.path.exists(candidate) else None
+
+
+@router.get("/source/{file_id}")
+async def preview_source(file_id: str):
+    input_path = _find_upload_by_id(file_id)
+    if not input_path:
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
+    return FileResponse(input_path, media_type="video/mp4", filename=f"{os.path.basename(file_id)}.mp4")
 
 
 @router.post("/plan")
