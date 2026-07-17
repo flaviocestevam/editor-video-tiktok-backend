@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import textwrap
 import uuid
 from pathlib import Path
@@ -74,8 +75,11 @@ def _safe_script(script_json: str, duration: float, width: int) -> list[dict[str
             continue
         try:
             start = max(0.0, min(float(item.get("start", 0)), duration))
-            end = max(start + 0.15, min(float(item.get("end", start + 1)), duration))
+            requested_end = float(item.get("end", start + 1))
+            end = min(duration, max(start + 0.15, requested_end))
         except (TypeError, ValueError):
+            continue
+        if start >= duration or end <= start:
             continue
         position = str(item.get("position", "bottom"))
         if position not in {"top", "middle", "bottom"}:
@@ -130,6 +134,50 @@ def _drawtext_filters(script: list[dict[str, Any]], temp_dir: str, width: int) -
     return filters, files
 
 
+def _extract_gray_frame(video_path: str, timestamp: float) -> bytes:
+    command = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{timestamp:.3f}",
+        "-i", video_path, "-frames:v", "1",
+        "-vf", "scale=180:-2:flags=bilinear,format=gray",
+        "-f", "rawvideo", "pipe:1",
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=60, check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        raise video_processor.VideoProcessingError("Não foi possível verificar os textos do vídeo final.") from exc
+    if result.returncode != 0 or not result.stdout:
+        raise video_processor.VideoProcessingError("Não foi possível verificar os textos do vídeo final.")
+    return result.stdout
+
+
+def _verify_caption_output(
+    input_path: str,
+    output_path: str,
+    script: list[dict[str, Any]],
+) -> float:
+    scores: list[float] = []
+    for item in script[:3]:
+        timestamp = (float(item["start"]) + float(item["end"])) / 2
+        before = _extract_gray_frame(input_path, timestamp)
+        after = _extract_gray_frame(output_path, timestamp)
+        sample_size = min(len(before), len(after))
+        if sample_size <= 0:
+            continue
+        score = sum(abs(before[index] - after[index]) for index in range(sample_size)) / sample_size
+        scores.append(score)
+
+    strongest = max(scores, default=0.0)
+    if strongest < 1.20:
+        try:
+            os.remove(output_path)
+        except FileNotFoundError:
+            pass
+        raise video_processor.VideoProcessingError(
+            "O vídeo foi processado, mas os textos não foram detectados no resultado. Tente novamente após o backend atualizar."
+        )
+    return strongest
+
+
 def render_captioned_video(
     *,
     input_path: str,
@@ -137,7 +185,7 @@ def render_captioned_video(
     temp_dir: str,
     script_json: str,
     quality_crf: int = 18,
-) -> None:
+) -> dict[str, int | float | bool]:
     duration, _, width, _ = video_processor.probe_video(input_path)
     script = _safe_script(script_json, duration, width)
     if not script:
@@ -159,6 +207,13 @@ def render_captioned_video(
             raise video_processor.VideoProcessingError("Não foi possível aplicar as frases ao vídeo.")
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
             raise video_processor.VideoProcessingError("O tutorial não gerou um arquivo válido.")
+
+        verification_score = _verify_caption_output(input_path, output_path, script)
+        return {
+            "captions_applied": True,
+            "caption_count": len(script),
+            "verification_score": round(verification_score, 3),
+        }
     finally:
         for path in text_files:
             try:
