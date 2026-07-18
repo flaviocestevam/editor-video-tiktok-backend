@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import generation, video
+from app.routers import generation, process_fixed, video
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,7 +26,7 @@ for directory in (STORAGE_DIR, UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR):
 app = FastAPI(
     title="Editor Vídeo TikTok - Backend",
     description="API para upload, download e edição criativa automática de vídeos curtos para uso pessoal.",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()]
@@ -41,7 +41,6 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Registra a rota e o tempo total de cada requisição."""
     start = time.monotonic()
     logger.info("--> %s %s", request.method, request.url.path)
     try:
@@ -67,19 +66,15 @@ async def log_requests(request: Request, call_next):
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    logger.exception(
-        "Erro não tratado em %s %s: %s", request.method, request.url.path, exc
-    )
+    logger.exception("Erro não tratado em %s %s: %s", request.method, request.url.path, exc)
     return JSONResponse(
         status_code=500,
-        content={
-            "detail": "Erro interno inesperado no servidor. Verifique os logs do backend."
-        },
+        content={"detail": "Erro interno inesperado no servidor. Verifique os logs do backend."},
     )
 
 
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
-
+app.include_router(process_fixed.router, prefix="/api/video", tags=["video"])
 app.include_router(video.router, prefix="/api/video", tags=["video"])
 app.include_router(generation.router, prefix="/api/generation", tags=["generation"])
 
@@ -89,10 +84,12 @@ async def root():
     return {
         "app": "Editor Vídeo TikTok - Backend",
         "status": "online",
+        "version": "1.1.0",
+        "processing_engine": "dynamic_montage_v6",
         "docs": "/docs",
     }
 
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "version": "1.1.0", "processing_engine": "dynamic_montage_v6"}
