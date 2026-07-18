@@ -16,7 +16,7 @@ router = APIRouter()
 async def process_video_fixed(
     file_id: str = Form(...),
     remove_audio: bool = Form(False),
-    flip_horizontal: bool = Form(True),
+    flip_horizontal: bool = Form(False),
     random_trim: bool = Form(True),
     crop_zoom: bool = Form(True),
     speed_change: bool = Form(True),
@@ -28,7 +28,7 @@ async def process_video_fixed(
     zoom_factor: float = Form(1.02),
     hue_degrees: float = Form(1.0),
     color_grade: str = Form("cinematic"),
-    output_fps: str = Form("29.97"),
+    output_fps: str = Form("source"),
     smooth_motion: bool = Form(True),
     adaptive_sharpen: bool = Form(True),
     dynamic_montage_enabled: bool = Form(False),
@@ -42,7 +42,7 @@ async def process_video_fixed(
     animated_grain_overlay: bool = Form(True),
     scene_color_variation: bool = Form(True),
     light_texture_overlay: bool = Form(True),
-    remove_text_overlays: bool = Form(True),
+    remove_text_overlays: bool = Form(False),
     quality_crf: int = Form(18),
 ):
     input_path = legacy_video._find_upload_by_id(file_id)
