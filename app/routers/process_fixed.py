@@ -170,11 +170,12 @@ async def process_video_fixed(
 
     report["processing_seconds"] = round(time.monotonic() - started, 2)
     logger.info("Processamento corrigido concluído: %s", output_filename)
-    file_url = f"/api/video/file/{output_filename}"
+    compatible_url = f"/api/video/result/{output_filename}"
     return {
         "output_filename": output_filename,
-        "processed_url": file_url,
-        "download_url": file_url,
+        "processed_url": compatible_url,
+        "download_url": compatible_url,
+        "direct_download_url": f"/api/video/file/{output_filename}",
         "dynamic_montage": dynamic_montage_enabled,
         "processing_report": report,
     }
