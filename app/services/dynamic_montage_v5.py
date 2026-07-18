@@ -12,13 +12,14 @@ from . import dynamic_montage_v4 as v4
 from . import video_processor
 
 _PROCESS_LOCK = threading.Lock()
+_BASE_BUILDER = v4._build_originality_filter_complex
 
 
 def _fade_last_builder(*args: Any, **kwargs: Any) -> tuple[str, float]:
     """Usa o plano v4, mas aplica o fade depois de grão/luz/vinheta."""
     requested_fade = bool(kwargs.get("fade", False))
     kwargs["fade"] = False
-    graph, final_duration = v4._build_originality_filter_complex(*args, **kwargs)
+    graph, final_duration = _BASE_BUILDER(*args, **kwargs)
     if requested_fade and final_duration > 0.4:
         length = min(0.22, final_duration / 4)
         fade_filters = (
