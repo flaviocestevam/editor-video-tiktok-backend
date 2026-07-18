@@ -42,6 +42,7 @@ async def process_video_fixed(
     animated_grain_overlay: bool = Form(True),
     scene_color_variation: bool = Form(True),
     light_texture_overlay: bool = Form(True),
+    remove_text_overlays: bool = Form(True),
     quality_crf: int = Form(18),
 ):
     input_path = legacy_video._find_upload_by_id(file_id)
@@ -82,6 +83,7 @@ async def process_video_fixed(
                 animated_grain_overlay=animated_grain_overlay,
                 scene_color_variation=scene_color_variation,
                 light_texture_overlay=light_texture_overlay,
+                remove_text_overlays=remove_text_overlays,
                 quality_crf=quality_crf,
             )
         else:
@@ -124,6 +126,7 @@ async def process_video_fixed(
                     "output_29_97_fps": output_fps == "29.97",
                     "smooth_motion": smooth_motion,
                     "adaptive_sharpen": adaptive_sharpen,
+                    "text_bands_removed": False,
                 },
                 "warnings": [],
             }
