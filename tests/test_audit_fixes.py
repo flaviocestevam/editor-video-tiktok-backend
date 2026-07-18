@@ -6,7 +6,7 @@ def test_fade_is_moved_after_visual_layers(monkeypatch):
         assert kwargs["fade"] is False
         return "[montage]noise=alls=1,format=yuv420p[vout]", 5.0
 
-    monkeypatch.setattr(montage.v4, "_build_originality_filter_complex", fake_builder)
+    monkeypatch.setattr(montage, "_BASE_BUILDER", fake_builder)
     graph, duration = montage._fade_last_builder(fade=True)
     assert duration == 5.0
     assert graph.index("noise=alls=1") < graph.index("fade=t=in")
