@@ -4,12 +4,40 @@ import time
 import uuid
 
 from fastapi import APIRouter, Form, HTTPException
+from fastapi.responses import FileResponse
 
 from app.routers import video as legacy_video
 from app.services import dynamic_montage, video_processor
 
 logger = logging.getLogger("editor_video_tiktok.process_fixed")
 router = APIRouter()
+
+
+@router.get("/file/{filename}")
+async def download_processed_file(filename: str):
+    safe_name = os.path.basename(filename)
+    if not safe_name.lower().endswith(".mp4"):
+        raise HTTPException(status_code=400, detail="Nome de arquivo inválido.")
+
+    path = os.path.join(legacy_video.OUTPUT_DIR, safe_name)
+    if not os.path.isfile(path) or os.path.getsize(path) <= 0:
+        raise HTTPException(
+            status_code=404,
+            detail="O vídeo não está mais no servidor. Processe novamente para gerar uma nova cópia.",
+        )
+
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=f"video-editado-{safe_name}",
+        content_disposition_type="attachment",
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+            "Access-Control-Expose-Headers": "Content-Disposition, Content-Length",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/process")
@@ -137,11 +165,16 @@ async def process_video_fixed(
             pass
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    if not os.path.isfile(output_path) or os.path.getsize(output_path) <= 0:
+        raise HTTPException(status_code=500, detail="O processamento terminou sem gerar um arquivo válido.")
+
     report["processing_seconds"] = round(time.monotonic() - started, 2)
     logger.info("Processamento corrigido concluído: %s", output_filename)
+    file_url = f"/api/video/file/{output_filename}"
     return {
         "output_filename": output_filename,
-        "download_url": f"/api/video/result/{output_filename}",
+        "processed_url": file_url,
+        "download_url": file_url,
         "dynamic_montage": dynamic_montage_enabled,
         "processing_report": report,
     }
