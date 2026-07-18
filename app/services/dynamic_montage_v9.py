@@ -125,8 +125,14 @@ def _run_final_pass(
             command.extend(["-map", "0:a:0?", "-c:a", "copy"])
         command.extend(["-movflags", "+faststart", temp_path])
 
-        result = video_processor._run(command, timeout=int(attempt["timeout"]))
-        valid = result.returncode == 0 and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0
+        try:
+            result = video_processor._run(command, timeout=int(attempt["timeout"]))
+            valid = result.returncode == 0 and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0
+            error_text = (result.stderr or result.stdout or "FFmpeg encerrado sem detalhes")[-500:]
+        except video_processor.VideoProcessingError as exc:
+            valid = False
+            error_text = str(exc)
+
         if valid:
             os.replace(temp_path, output_path)
             final_probe = v5._probe(output_path)
@@ -151,7 +157,6 @@ def _run_final_pass(
                 ),
             }
 
-        error_text = (result.stderr or result.stdout or "FFmpeg encerrado sem detalhes")[-500:]
         errors.append(error_text)
         try:
             os.remove(temp_path)
